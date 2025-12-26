@@ -47,21 +47,21 @@
 
 <script lang="ts" setup>
 import { ref, computed, watch, onUnmounted } from "vue";
-import { SSE } from "sse.js"; // 引入 sse.js 库
+import { SSE } from "sse.js";
 
 interface ApiResponse {
   type: string;
   content: string;
 }
 
-const inputText = ref(""); // 输入文本
-const selectedFile = ref<File | null>(null); // 用户上传的文件
-const loading = ref(false); // 加载状态
-const result = ref(""); // 最终结果
-const previewUrl = ref<string | null>(null); // 图片预览 URL
-const sseResult = ref(""); // SSE 实时结果
+const inputText = ref("");
+const selectedFile = ref<File | null>(null);
+const loading = ref(false);
+const result = ref("");
+const previewUrl = ref<string | null>(null);
+const sseResult = ref("");
 const acceptedFileTypes = [".png", ".jpg", ".jpeg", ".webp", ".pdf", ".doc", ".docx"].join(",");
-const sseClient = ref<SSE | null>(null); // SSE 客户端对象
+const sseClient = ref<SSE | null>(null);
 
 const isImageFile = computed(() => {
   if (!selectedFile.value) return false;
@@ -116,7 +116,6 @@ function clearSelectedFile() {
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
-// 提交文本到后端
 function uploadText() {
   if (!inputText.value.trim()) {
     alert("输入文本不能为空！");
@@ -127,17 +126,16 @@ function uploadText() {
   startSSE(apiAddUrl, { text: inputText.value.trim() });
 }
 
-// 文件和文本上传功能，改用 urlencoded 格式
 function convertToKana() {
   if (!inputText.value.trim() && !selectedFile.value) {
     alert("请至少输入文本或上传文件！");
     return;
   }
 
+  result.value = "";
   let uploadUrl = "";
   const payload: Record<string, string> = {};
 
-  // 处理文件名（将文件名作为参数，以符合 urlencoded 格式）
   if (selectedFile.value) {
     const fileExt = selectedFile.value.name.split(".").pop()?.toLowerCase() ?? "";
     if (["png", "jpg", "jpeg", "webp"].includes(fileExt)) {
@@ -148,10 +146,9 @@ function convertToKana() {
       alert("不支持此文件类型！");
       return;
     }
-    payload.fileName = selectedFile.value.name; // 将文件名作为参数
+    payload.fileName = selectedFile.value.name;
   }
 
-  // 添加文本参数
   if (inputText.value.trim()) {
     if (!selectedFile.value) {
       uploadUrl = apiAddUrl; 
@@ -161,14 +158,12 @@ function convertToKana() {
 
   loading.value = true;
 
-  // 发送参数，以 urlencoded 格式
   startSSE(uploadUrl, payload);
 }
 
-// 启动 SSE，改为支持 urlencoded
 function startSSE(url: string, body: Record<string, string>) {
   const headers = { "Content-Type": "application/x-www-form-urlencoded" };
-  const payload = new URLSearchParams(body).toString(); // 转换为键值对字符串
+  const payload = new URLSearchParams(body).toString();
 
   console.log("发送的请求 URL:", url);
   console.log("请求 Headers:", headers);
@@ -183,7 +178,7 @@ function startSSE(url: string, body: Record<string, string>) {
   console.log("接收到数据:", event.data);
   const data: ApiResponse = JSON.parse(event.data);
   if (data.type === "message") {
-    result.value += `${data.content}\n`;
+    result.value += `${data.content}`;
     loading.value = false;
   } else if (data.type === "error") {
     console.error("发生错误:", data.content);
