@@ -46,10 +46,12 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onUnmounted } from "vue";
+import { SSE } from "sse.js";
 
 interface ApiResponse {
-  result: string;
+  type: string;
+  content: string;
 }
 
 const inputText = ref("");
@@ -57,18 +59,10 @@ const selectedFile = ref<File | null>(null);
 const loading = ref(false);
 const result = ref("");
 const previewUrl = ref<string | null>(null);
+const sseResult = ref("");
+const acceptedFileTypes = [".png", ".jpg", ".jpeg", ".webp", ".pdf", ".doc", ".docx"].join(",");
+const sseClient = ref<SSE | null>(null);
 
-const acceptedFileTypes = [
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".webp",
-  ".pdf",
-  ".doc",
-  ".docx",
-].join(",");
-
-// 判断选中的文件是否是图片类型
 const isImageFile = computed(() => {
   if (!selectedFile.value) return false;
   const imgExts = ["png", "jpg", "jpeg", "webp"];
@@ -76,31 +70,33 @@ const isImageFile = computed(() => {
   return imgExts.includes(ext);
 });
 
+const apiAddUrl = "http://34.94.102.46:3308/api/add";
+const apiImageUrl = "http://34.94.102.46:3308/api/image";
+const apiFileUrl = "http://34.94.102.46:3308/api/file";
+
 function onFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
   if (target.files && target.files.length > 0) {
     const file = target.files[0];
-    const allowedExts = ["png", "jpg", "jpeg", "webp", "pdf", "doc", "docx"];
+    if (!file) {
+      alert("请选择有效的上传文件！");
+      clearSelectedFile();
+      return;
+    }
     const fileExt = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const allowedExts = ["png", "jpg", "jpeg", "webp", "pdf", "doc", "docx"];
 
-    if (!fileExt || !allowedExts.includes(fileExt)) {
-      alert(
-        "不支持此文件类型！只允许上传图片：png, jpg, jpeg, webp，和文档：pdf, doc, docx"
-      );
+    if (!allowedExts.includes(fileExt)) {
+      alert("不支持此文件类型！");
       clearSelectedFile();
       return;
     }
 
     selectedFile.value = file;
 
-    // 如果是图片，生成预览url
-    if (["png", "jpg", "jpeg", "webp"].includes(fileExt)) {
-      // 先释放旧的url，避免内存泄漏
-      if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
+    if (isImageFile.value) {
       previewUrl.value = URL.createObjectURL(file);
     } else {
-      // 非图片，清空预览
-      if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
       previewUrl.value = null;
     }
   } else {
@@ -120,52 +116,93 @@ function clearSelectedFile() {
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
-async function convertToKana() {
-  result.value = "";
-
-  if (!inputText.value && !selectedFile.value) {
-    result.value = "请在输入框输入文本或上传支持的文件。";
+function uploadText() {
+  if (!inputText.value.trim()) {
+    alert("输入文本不能为空！");
     return;
   }
 
   loading.value = true;
+  startSSE(apiAddUrl, { text: inputText.value.trim() });
+}
 
-  try {
-    const formData = new FormData();
-    if (selectedFile.value) {
-      formData.append("file", selectedFile.value);
-    }
-    if (inputText.value.trim() !== "") {
-      formData.append("text", inputText.value.trim());
-    }
+function convertToKana() {
+  if (!inputText.value.trim() && !selectedFile.value) {
+    alert("请至少输入文本或上传文件！");
+    return;
+  }
 
-    // TODO: 替换成你后端的接口地址
-    const response = await fetch("https://api.example.com/convert", {
-      method: "POST",
-      body: formData,
-    });
+  result.value = "";
+  let uploadUrl = "";
+  const payload: Record<string, string> = {};
 
-    if (!response.ok) {
-      throw new Error(`服务器错误，状态码：${response.status}`);
-    }
-
-    const data: ApiResponse = await response.json();
-
-    if ("result" in data) {
-      result.value = data.result;
+  if (selectedFile.value) {
+    const fileExt = selectedFile.value.name.split(".").pop()?.toLowerCase() ?? "";
+    if (["png", "jpg", "jpeg", "webp"].includes(fileExt)) {
+      uploadUrl = apiImageUrl;
+    } else if (["pdf", "doc", "docx"].includes(fileExt)) {
+      uploadUrl = apiFileUrl;
     } else {
-      result.value = "接口返回格式异常。";
+      alert("不支持此文件类型！");
+      return;
     }
-  } catch (error) {
-    if (error instanceof Error) {
-      result.value = `请求失败：${error.message}`;
-    } else {
-      result.value = "请求失败：未知错误";
+    payload.fileName = selectedFile.value.name;
+  }
+
+  if (inputText.value.trim()) {
+    if (!selectedFile.value) {
+      uploadUrl = apiAddUrl; 
     }
-  } finally {
+    payload.text = inputText.value.trim();
+  }
+
+  loading.value = true;
+
+  startSSE(uploadUrl, payload);
+}
+
+function startSSE(url: string, body: Record<string, string>) {
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  const payload = new URLSearchParams(body).toString();
+
+  console.log("发送的请求 URL:", url);
+  console.log("请求 Headers:", headers);
+  console.log("请求 Body:", payload);
+
+  sseClient.value = new SSE(url, {
+    headers: headers,
+    payload: payload,
+  });
+
+  sseClient.value.addEventListener("message", (event) => {
+  console.log("接收到数据:", event.data);
+  const data: ApiResponse = JSON.parse(event.data);
+  if (data.type === "message") {
+    result.value += `${data.content}`;
     loading.value = false;
+  } else if (data.type === "error") {
+    console.error("发生错误:", data.content);
+    loading.value = false;
+    stopSSE();
+  }
+});
+
+  sseClient.value.addEventListener("error", (event) => {
+    console.error("发生错误: ", event);
+    stopSSE();
+  });
+
+  sseClient.value.stream();
+}
+
+function stopSSE() {
+  if (sseClient.value) {
+    sseClient.value.close();
+    sseClient.value = null;
   }
 }
+
+onUnmounted(() => stopSSE());
 </script>
 
 <style scoped>
