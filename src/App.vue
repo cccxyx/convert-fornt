@@ -128,67 +128,82 @@ function uploadText() {
 
 function convertToKana() {
   if (!inputText.value.trim() && !selectedFile.value) {
-    alert("请至少输入文本或上传文件！");
+    alert("请至少输入文本或上传支持的文件！");
     return;
   }
 
   result.value = "";
   let uploadUrl = "";
-  const payload: Record<string, string> = {};
+  let payload: FormData | Record<string, string> = {};
 
   if (selectedFile.value) {
     const fileExt = selectedFile.value.name.split(".").pop()?.toLowerCase() ?? "";
-    if (["png", "jpg", "jpeg", "webp"].includes(fileExt)) {
+    const allowedImageExts = ["png", "jpg", "jpeg", "webp"];
+    const allowedDocExts = ["pdf", "doc", "docx"];
+
+    if (allowedImageExts.includes(fileExt)) {
       uploadUrl = apiImageUrl;
-    } else if (["pdf", "doc", "docx"].includes(fileExt)) {
+    } else if (allowedDocExts.includes(fileExt)) {
       uploadUrl = apiFileUrl;
     } else {
-      alert("不支持此文件类型！");
+      alert("不支持此文件类型。");
+      clearSelectedFile();
       return;
     }
-    payload.fileName = selectedFile.value.name;
+
+    const formData = new FormData();
+    formData.append("file", selectedFile.value);
+    payload = formData;
+
+    startSSE(uploadUrl, payload);
+    return;
   }
 
   if (inputText.value.trim()) {
-    if (!selectedFile.value) {
-      uploadUrl = apiAddUrl; 
-    }
-    payload.text = inputText.value.trim();
+    uploadUrl = apiAddUrl;
+    payload = { text: inputText.value.trim() };
+
+    startSSE(uploadUrl, payload);
   }
-
-  loading.value = true;
-
-  startSSE(uploadUrl, payload);
 }
 
-function startSSE(url: string, body: Record<string, string>) {
-  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
-  const payload = new URLSearchParams(body).toString();
+function startSSE(url: string, body: FormData | Record<string, string>) {
+  const isFormData = body instanceof FormData;
+
+  const headers = isFormData
+    ? undefined
+    : { "Content-Type": "application/x-www-form-urlencoded" };
+
+  const payload = isFormData
+    ? body
+    : new URLSearchParams(body).toString();
 
   console.log("发送的请求 URL:", url);
-  console.log("请求 Headers:", headers);
-  console.log("请求 Body:", payload);
+  console.log("发送的请求 Headers:", headers);
+  console.log("发送的请求 Body:", payload);
 
   sseClient.value = new SSE(url, {
-    headers: headers,
-    payload: payload,
+    headers,
+    payload,
   });
 
   sseClient.value.addEventListener("message", (event) => {
-  console.log("接收到数据:", event.data);
-  const data: ApiResponse = JSON.parse(event.data);
-  if (data.type === "message") {
-    result.value += `${data.content}`;
-    loading.value = false;
-  } else if (data.type === "error") {
-    console.error("发生错误:", data.content);
-    loading.value = false;
-    stopSSE();
-  }
-});
+    console.log("输出:", event.data);
+    const data: ApiResponse = JSON.parse(event.data);
+
+    if (data.type === "message") {
+      result.value += data.content;
+      loading.value = false;
+    } else if (data.type === "error") {
+      result.value = `错误信息：${data.content}`;
+      loading.value = false;
+    }
+  });
 
   sseClient.value.addEventListener("error", (event) => {
-    console.error("发生错误: ", event);
+    console.error("发生错误:", event);
+    result.value = "连接失败。";
+    loading.value = false;
     stopSSE();
   });
 
